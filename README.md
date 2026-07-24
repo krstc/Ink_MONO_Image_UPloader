@@ -1,35 +1,12 @@
-# Ink MONO Image Uploader / ED060KD1 WiFi Display
-
-ESP32-S3-N16R8 + epdiy V7 firmware for the ED060KD1 6-inch grayscale EPD panel.
-
-This project turns an ED060KD1 e-paper panel into a WiFi image display: upload,
-crop, rotate, tone-map, store and play 16-level grayscale images directly from a
-browser.
-
-<p align="center">
-  <img src="readme/开机画面.JPG" alt="Startup logo on ED060KD1" width="45%">
-  <img src="readme/配置页面.JPG" alt="Startup configuration screen" width="45%">
-</p>
-
-<p align="center">
-  <img src="readme/图片显示.JPG" alt="Displayed image on ED060KD1" width="45%">
-  <img src="readme/灰阶校准.JPG" alt="16-level grayscale calibration page" width="45%">
-</p>
-
-<p align="center">
-  <img src="readme/web上传页面1.png" alt="Web uploader main page" width="45%">
-  <img src="readme/web上传页面2.png" alt="Web uploader slot controls" width="45%">
-</p>
-
----
+# ED060KD1 WiFi 图传 / Ink MONO Image Uploader
 
 ## 中文说明
 
 ### 项目简介
 
-`Ink_MONO_Image_UPloader` 是为 ED060KD1 墨水屏调通的 ESP32-S3 WiFi 图传固件。它基于 PlatformIO / Arduino 框架，使用本仓库内置的 epdiy V7 驱动源码，并保留了当前已经实测可用的 ED060KD1 GPIO 和 16 灰阶 LUT 校准参数。
+`Ink_MONO_Image_UPloader` 是为 ED060KD1 6 英寸灰阶墨水屏调通的 ESP32-S3 WiFi 图传固件。项目基于 PlatformIO / Arduino 框架，使用 epdiy V7 并口墨水屏驱动，并保留了当前已经实测稳定的 ED060KD1 GPIO 定义和 16 灰阶 LUT 校准参数。
 
-固件启动后会创建开放 WiFi 热点，也可以配置 STA 模式接入路由器。用户通过浏览器上传图片，网页端完成旋转、缩放、裁剪、亮度、对比度和灰阶转换，ESP32 端将处理后的 4bpp 灰阶帧保存到 LittleFS slot，并刷新到屏幕。
+固件启动后会创建开放 WiFi 热点，也可以配置 STA 模式接入路由器。用户通过浏览器上传图片，网页端完成裁剪、旋转、缩放、亮度、对比度和灰阶转换，ESP32 端将处理后的 4bpp 灰阶帧保存到 LittleFS slot，并刷新到屏幕。
 
 ### 已实现功能
 
@@ -48,7 +25,45 @@ browser.
 - 开发者模式：16 灰阶图、棋盘格、分辨率测试、黑白循环修复。
 - 生成好的 full flash 包保存在 `dist/`。
 
-### 硬件目标
+### 效果图
+
+#### 开机画面 / Startup screen
+
+设备上电后显示 logo 页面，用于确认屏幕初始化和基础刷新流程正常。
+
+![Startup screen](readme/开机画面.JPG)
+
+#### 配置页面 / Device configuration screen
+
+开机后的配置页会显示 AP / STA 状态、访问地址、slot 状态和即将显示的图片槽位。
+
+![Configuration screen](readme/配置页面.JPG)
+
+#### 图片显示效果 / Image display result
+
+上传图片经过网页端裁剪、旋转、缩放和灰阶取模后，在 ED060KD1 上显示的实拍效果。
+
+![Displayed image](readme/图片显示.JPG)
+
+#### 16 灰阶校准 / 16-level grayscale calibration
+
+开发者模式中的 16 灰阶测试图，用于观察 ED060KD1 当前 LUT 的灰阶过渡是否均匀。
+
+![16-level grayscale calibration](readme/灰阶校准.JPG)
+
+#### Web 上传页面 / Web uploader
+
+浏览器端主界面，支持图片选择、预览、裁剪、旋转、缩放、亮度和对比度调整。
+
+![Web uploader main page](readme/web上传页面1.png)
+
+#### Slot 管理页面 / Slot management
+
+slot 控制区域提供上传目标选择、缩略图、显示、删除、轮播和启动 slot 配置。
+
+![Web uploader slot controls](readme/web上传页面2.png)
+
+### 硬件需求
 
 | 项目 | 参数 |
 | --- | --- |
@@ -123,18 +138,18 @@ Web 页面的 Developer 区域提供：
 
 ```text
 .
-├── dist/                         # full flash package
-├── lib/epdiy2/                   # trimmed epdiy driver source
-├── readme/                       # README images
-├── src/
-│   ├── ed060kd1_driver.cpp       # ED060KD1 display driver wrapper
-│   ├── ed060kd1_driver.h
-│   ├── logo_image.h              # startup logo bitmap
-│   ├── main.cpp                  # WiFi, filesystem, slots, display logic
-│   └── web_page.h                # embedded web UI
-├── partitions.csv
-├── platformio.ini
-└── README.md
+|-- dist/                         # full flash package
+|-- lib/epdiy2/                   # trimmed epdiy driver source
+|-- readme/                       # README images
+|-- src/
+|   |-- ed060kd1_driver.cpp       # ED060KD1 display driver wrapper
+|   |-- ed060kd1_driver.h
+|   |-- logo_image.h              # startup logo bitmap
+|   |-- main.cpp                  # WiFi, filesystem, slots, display logic
+|   `-- web_page.h                # embedded web UI
+|-- partitions.csv
+|-- platformio.ini
+`-- README.md
 ```
 
 ### 注意事项
@@ -150,14 +165,9 @@ Web 页面的 Developer 区域提供：
 
 ### Overview
 
-`Ink_MONO_Image_UPloader` is a PlatformIO / Arduino firmware project for driving
-an ED060KD1 grayscale e-paper panel with an ESP32-S3-N16R8 board and an epdiy V7
-parallel EPD interface.
+`Ink_MONO_Image_UPloader` is a PlatformIO / Arduino firmware project for driving an ED060KD1 grayscale e-paper panel with an ESP32-S3-N16R8 board and an epdiy V7 parallel EPD interface.
 
-The firmware exposes a browser-based image uploader. Images are cropped,
-rotated, scaled, brightness/contrast adjusted and converted to a calibrated
-16-level grayscale frame in the browser, then uploaded to ESP32 LittleFS slots
-and displayed on the panel.
+The firmware exposes a browser-based image uploader. Images are cropped, rotated, scaled, brightness/contrast adjusted and converted to a calibrated 16-level grayscale frame in the browser, then uploaded to ESP32 LittleFS slots and displayed on the panel.
 
 ### Features
 
@@ -176,7 +186,7 @@ and displayed on the panel.
 - Developer tools: 16-gray test, checkerboard, resolution test and repair refresh.
 - Ready-to-flash full binary package under `dist/`.
 
-### Target Hardware
+### Hardware Requirements
 
 | Item | Value |
 | --- | --- |
@@ -198,8 +208,7 @@ The project uses a custom `partitions.csv`:
 | `app0` | `0x10000` | `0x300000` | Firmware |
 | `spiffs` | `0x310000` | `0xCF0000` | LittleFS image-slot storage |
 
-Each image slot stores one `1448 x 1072` packed 4bpp grayscale frame, about
-758 KB per slot. The firmware currently exposes 12 slots.
+Each image slot stores one `1448 x 1072` packed 4bpp grayscale frame, about 758 KB per slot. The firmware currently exposes 12 slots.
 
 ### Build And Flash
 
@@ -230,10 +239,7 @@ Change it if your board appears on another port.
 
 ### STA Mode
 
-The web UI can scan nearby WiFi networks. Select a router SSID, enter the
-password and save. After a successful connection, the STA IP address is shown on
-the display status page and in the web UI. AP mode remains enabled as a fallback
-access path.
+The web UI can scan nearby WiFi networks. Select a router SSID, enter the password and save. After a successful connection, the STA IP address is shown on the display status page and in the web UI. AP mode remains enabled as a fallback access path.
 
 ### Upload Frame Format
 
@@ -242,8 +248,7 @@ The browser sends a `1448 x 1072` packed 4bpp grayscale frame:
 - 4 bits per pixel, input level `0-15`.
 - Pixel 0 is stored in the low nibble.
 - Pixel 1 is stored in the high nibble.
-- Firmware maps each input level through the calibrated ED060KD1 grayscale table
-  before drawing to the epdiy framebuffer.
+- Firmware maps each input level through the calibrated ED060KD1 grayscale table before drawing to the epdiy framebuffer.
 
 ### Developer Tools
 
@@ -256,12 +261,8 @@ The Developer section in the web UI includes:
 
 ### Notes
 
-- The AP is intentionally open for lab use. Add access control before using it in
-  an untrusted environment.
-- Large e-paper refreshes are slow by nature; repair refresh takes longer than a
-  normal image update.
-- Slot images live in LittleFS. Flashing a full image package or formatting the
-  filesystem can erase stored images.
-- The included driver settings are validated for this hardware. Check GPIO and
-  power-control wiring before porting to another epdiy V7 board.
+- The AP is intentionally open for lab use. Add access control before using it in an untrusted environment.
+- Large e-paper refreshes are slow by nature; repair refresh takes longer than a normal image update.
+- Slot images live in LittleFS. Flashing a full image package or formatting the filesystem can erase stored images.
+- The included driver settings are validated for this hardware. Check GPIO and power-control wiring before porting to another epdiy V7 board.
 
