@@ -1,0 +1,18 @@
+.pio/
+.vscode/
+.cache/
+*.elf
+*.map
+*.o
+*.d
+*.log
+
+# Keep checked release artifacts in dist/, but ignore transient packaging.
+dist/*.tmp
+dist/*.bak
+
+# Local epdiy vendor tree: keep build sources, skip bulky upstream docs/examples.
+lib/epdiy2/.github/
+lib/epdiy2/doc/
+lib/epdiy2/examples/
+lib/epdiy2/scripts/
