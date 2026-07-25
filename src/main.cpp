@@ -4,6 +4,7 @@
 #include <WebServer.h>
 #include <WiFi.h>
 #include <esp_heap_caps.h>
+#include <time.h>
 
 #include "ed060kd1_driver.h"
 #include "logo_image.h"
@@ -12,8 +13,14 @@
 static const char* AP_SSID = "ED060KD1-WIFI";
 static const int SLOT_COUNT = 12;
 static const uint32_t DEFAULT_CAROUSEL_INTERVAL_S = 60;
+static const uint32_t MIN_CAROUSEL_INTERVAL_S = 10;
+static const uint32_t MAX_CAROUSEL_INTERVAL_S = 30UL * 24UL * 60UL * 60UL;
 static const uint32_t STARTUP_AUTOPLAY_SECONDS = 5;
-static const uint32_t SLOT_FILE_BYTES = ED060KD1_FRAME_BYTES;
+static const uint16_t MIN_DISPLAY_WIDTH = 320;
+static const uint16_t MIN_DISPLAY_HEIGHT = 240;
+static const uint16_t MAX_DISPLAY_WIDTH = 1872;
+static const uint16_t MAX_DISPLAY_HEIGHT = 1404;
+static const uint32_t MAX_DISPLAY_PIXELS = 2800000UL;
 
 static WebServer server(80);
 static Preferences prefs;
@@ -45,6 +52,8 @@ static bool sta_connecting = false;
 static bool pending_wifi_status_screen = false;
 static bool startup_sequence_active = false;
 static bool startup_auto_cancelled = false;
+static uint16_t configured_width = ED060KD1_DEFAULT_WIDTH;
+static uint16_t configured_height = ED060KD1_DEFAULT_HEIGHT;
 
 static const uint32_t STA_CONNECT_TIMEOUT_MS = 30000;
 
@@ -60,6 +69,18 @@ static bool validSlot(int slot) {
     return slot >= 0 && slot < SLOT_COUNT;
 }
 
+static uint32_t displayWidth() {
+    return Epd.ready() ? (uint32_t)Epd.width() : configured_width;
+}
+
+static uint32_t displayHeight() {
+    return Epd.ready() ? (uint32_t)Epd.height() : configured_height;
+}
+
+static uint32_t displayFrameBytes() {
+    return (displayWidth() * displayHeight()) / 2;
+}
+
 static bool slotExists(int slot) {
     if (!validSlot(slot) || !fs_ready) {
         return false;
@@ -72,7 +93,7 @@ static bool slotExists(int slot) {
     if (!f) {
         return false;
     }
-    bool ok = f.size() == ED060KD1_FRAME_BYTES;
+    bool ok = f.size() == displayFrameBytes();
     f.close();
     return ok;
 }
@@ -81,7 +102,8 @@ static uint32_t theoreticalSlotCapacity() {
     if (!fs_ready) {
         return 0;
     }
-    return LittleFS.totalBytes() / SLOT_FILE_BYTES;
+    uint32_t frame_bytes = displayFrameBytes();
+    return frame_bytes == 0 ? 0 : LittleFS.totalBytes() / frame_bytes;
 }
 
 static uint32_t additionalSlotCapacity() {
@@ -91,6 +113,19 @@ static uint32_t additionalSlotCapacity() {
 
 static void markUserOperation() {
     startup_auto_cancelled = true;
+}
+
+static bool validDisplayConfig(uint32_t width, uint32_t height) {
+    if (width < MIN_DISPLAY_WIDTH || height < MIN_DISPLAY_HEIGHT) {
+        return false;
+    }
+    if (width > MAX_DISPLAY_WIDTH || height > MAX_DISPLAY_HEIGHT) {
+        return false;
+    }
+    if ((width & 7) != 0) {
+        return false;
+    }
+    return width * height <= MAX_DISPLAY_PIXELS;
 }
 
 static String jsonEscape(const String& input) {
@@ -116,6 +151,16 @@ static String staIpString() {
 
 static void queueWifiStatusScreen() {
     pending_wifi_status_screen = true;
+}
+
+static uint32_t clampCarouselInterval(uint32_t interval) {
+    if (interval < MIN_CAROUSEL_INTERVAL_S) {
+        return MIN_CAROUSEL_INTERVAL_S;
+    }
+    if (interval > MAX_CAROUSEL_INTERVAL_S) {
+        return MAX_CAROUSEL_INTERVAL_S;
+    }
+    return interval;
 }
 
 static void showWifiStatusScreen() {
@@ -161,13 +206,10 @@ static void saveStartupSlot() {
 static void loadCarouselConfig() {
     prefs.begin("carousel", true);
     carousel_enabled = prefs.getBool("enabled", false);
-    carousel_interval_s = prefs.getUInt("interval", DEFAULT_CAROUSEL_INTERVAL_S);
+    carousel_interval_s = clampCarouselInterval(prefs.getUInt("interval", DEFAULT_CAROUSEL_INTERVAL_S));
     carousel_index = prefs.getInt("lastSlot", -1);
     startup_slot = prefs.getInt("startupSlot", -1);
     prefs.end();
-    if (carousel_interval_s < 10) {
-        carousel_interval_s = 10;
-    }
     if (!validSlot(carousel_index)) {
         carousel_index = -1;
     }
@@ -181,6 +223,28 @@ static void loadWifiConfig() {
     stored_ssid = prefs.getString("ssid", "");
     stored_pass = prefs.getString("pass", "");
     prefs.end();
+}
+
+static void loadDisplayConfig() {
+    prefs.begin("display", true);
+    uint32_t width = prefs.getUInt("width", ED060KD1_DEFAULT_WIDTH);
+    uint32_t height = prefs.getUInt("height", ED060KD1_DEFAULT_HEIGHT);
+    prefs.end();
+    if (!validDisplayConfig(width, height)) {
+        width = ED060KD1_DEFAULT_WIDTH;
+        height = ED060KD1_DEFAULT_HEIGHT;
+    }
+    configured_width = (uint16_t)width;
+    configured_height = (uint16_t)height;
+}
+
+static void saveDisplayConfig(uint32_t width, uint32_t height) {
+    prefs.begin("display", false);
+    prefs.putUInt("width", width);
+    prefs.putUInt("height", height);
+    prefs.end();
+    configured_width = (uint16_t)width;
+    configured_height = (uint16_t)height;
 }
 
 static void saveWifiConfig(const String& ssid, const String& pass) {
@@ -226,7 +290,7 @@ static bool ensureFrameBuffer() {
     if (frame_buffer != nullptr) {
         return true;
     }
-    frame_buffer = (uint8_t*)heap_caps_malloc(ED060KD1_FRAME_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    frame_buffer = (uint8_t*)heap_caps_malloc(displayFrameBytes(), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (frame_buffer == nullptr) {
         status_message = "No PSRAM frame buffer";
         Serial.println(status_message);
@@ -244,9 +308,9 @@ static bool loadSlotToFrame(int slot) {
     if (!f) {
         return false;
     }
-    size_t read_len = f.read(frame_buffer, ED060KD1_FRAME_BYTES);
+    size_t read_len = f.read(frame_buffer, displayFrameBytes());
     f.close();
-    return read_len == ED060KD1_FRAME_BYTES;
+    return read_len == displayFrameBytes();
 }
 
 static void whiteCleanCycles(int cycles) {
@@ -280,7 +344,7 @@ static bool displaySlotWithCleanCycles(int slot, int clean_cycles) {
         status_message = "Slot load failed";
         return false;
     }
-    bool ok = Epd.displayPacked4bpp(frame_buffer, ED060KD1_FRAME_BYTES, false);
+    bool ok = Epd.displayPacked4bpp(frame_buffer, displayFrameBytes(), false);
     Epd.panelPowerOff();
     status_message = ok ? String("Displayed slot ") + String(slot + 1) : "Display refresh failed";
     if (ok) {
@@ -418,18 +482,20 @@ static void drawLogoFlourish() {
 }
 
 static bool drawPacked4bppToFrame(const uint8_t* packed, size_t length) {
-    if (packed == nullptr || length != ED060KD1_FRAME_BYTES) {
+    uint32_t w = displayWidth();
+    uint32_t h = displayHeight();
+    if (packed == nullptr || length != displayFrameBytes()) {
         return false;
     }
 
     uint8_t* fb = Epd.framebuffer();
-    for (int y = 0; y < ED060KD1_HEIGHT; y++) {
-        int row_base = y * ED060KD1_WIDTH;
-        for (int x = 0; x < ED060KD1_WIDTH; x++) {
+    for (uint32_t y = 0; y < h; y++) {
+        uint32_t row_base = y * w;
+        for (uint32_t x = 0; x < w; x++) {
             int idx = row_base + x;
             uint8_t packed_byte = pgm_read_byte(packed + (idx >> 1));
             uint8_t level = (idx & 1) ? (packed_byte >> 4) : (packed_byte & 0x0F);
-            epd_draw_pixel(x, y, Epd.calibratedLevelColor(level, x, y), fb);
+            epd_draw_pixel((int)x, (int)y, Epd.calibratedLevelColor(level, x, y), fb);
         }
         if ((y & 0x3F) == 0) {
             yield();
@@ -445,7 +511,12 @@ static void showStartupSplash() {
 
     display_busy = true;
     Epd.blackWhiteCleanCycle();
-    if (drawPacked4bppToFrame(LOGO_IMAGE_4BPP, LOGO_IMAGE_BYTES)) {
+    if (displayFrameBytes() == LOGO_IMAGE_BYTES && drawPacked4bppToFrame(LOGO_IMAGE_4BPP, LOGO_IMAGE_BYTES)) {
+        Epd.updateScreen(MODE_GC16);
+    } else {
+        Epd.clearWhiteBuffer();
+        Epd.drawText("IMBREAD", displayWidth() / 8, displayHeight() / 3, 8, 0x00);
+        Epd.drawText("WIFI ESP DISPLAY", displayWidth() / 8, displayHeight() / 2, 4, 0x44);
         Epd.updateScreen(MODE_GC16);
     }
     Epd.panelPowerOff();
@@ -454,12 +525,21 @@ static void showStartupSplash() {
 }
 
 static void slotCardRect(int slot, int& x, int& y, int& w, int& h) {
-    const int panel_x = 1004;
-    const int panel_y = 160;
-    const int card_w = 186;
-    const int card_h = 116;
-    const int gap_x = 14;
-    const int gap_y = 9;
+    int dw = (int)displayWidth();
+    int dh = (int)displayHeight();
+    int panel_y = max(96, (dh * 15) / 100);
+    int gap_x = max(8, dw / 105);
+    int gap_y = max(6, dh / 120);
+    int right_margin = max(28, dw / 36);
+    int bottom_margin = max(28, dh / 36);
+    int min_card_w = max(64, min(92, dw / 8));
+    int required_w = min_card_w * 2 + gap_x;
+    int panel_x = max(360, (dw * 68) / 100);
+    if (panel_x + required_w + right_margin > dw) {
+        panel_x = max(right_margin, dw - right_margin - required_w);
+    }
+    int card_w = max(min_card_w, (dw - panel_x - right_margin - gap_x) / 2);
+    int card_h = max(58, (dh - panel_y - bottom_margin - gap_y * 5) / 6);
     int col = slot % 2;
     int row = slot / 2;
     x = panel_x + col * (card_w + gap_x);
@@ -477,10 +557,10 @@ static void drawSlotThumbnail(int slot, int x, int y, int w, int h) {
     }
 
     for (int ty = 0; ty < h - 2; ty++) {
-        int sy = (ty * ED060KD1_HEIGHT) / (h - 2);
-        int row_base = sy * ED060KD1_WIDTH;
+        int sy = (ty * (int)displayHeight()) / (h - 2);
+        int row_base = sy * (int)displayWidth();
         for (int tx = 0; tx < w - 2; tx++) {
-            int sx = (tx * ED060KD1_WIDTH) / (w - 2);
+            int sx = (tx * (int)displayWidth()) / (w - 2);
             int idx = row_base + sx;
             uint8_t packed_byte = frame_buffer[idx >> 1];
             uint8_t level = (idx & 1) ? (packed_byte >> 4) : (packed_byte & 0x0F);
@@ -507,10 +587,11 @@ static void drawSlotCard(int slot, int next_slot, bool highlight) {
 
     char label[8];
     snprintf(label, sizeof(label), "S%02d", slot + 1);
-    Epd.drawText(label, x + 10, y + 10, 3, 0x00);
-    Epd.drawText(exists ? "READY" : "EMPTY", x + 108, y + 18, 2, exists ? 0x00 : 0x88);
+    int label_scale = w > 150 ? 3 : 2;
+    Epd.drawText(label, x + 10, y + 10, label_scale, 0x00);
+    Epd.drawText(exists ? "READY" : "EMPTY", x + w / 2 + 12, y + 18, 2, exists ? 0x00 : 0x88);
 
-    drawSlotThumbnail(slot, x + 10, y + 56, 100, 50);
+    drawSlotThumbnail(slot, x + 10, y + h / 2, min(100, w - 20), max(28, h / 2 - 10));
     if (slot == next_slot && highlight) {
         drawThickRect(x - 4, y - 4, w + 8, h + 8, 0x00, 3);
     }
@@ -542,35 +623,53 @@ static void drawCountdown(uint32_t seconds_left) {
 
 static void drawStartupDashboard(int next_slot, uint32_t seconds_left, bool highlight) {
     (void)seconds_left;
+    int w = (int)displayWidth();
+    int h = (int)displayHeight();
+    int margin = max(24, min(w, h) / 26);
+    int left_x = margin + 60;
+    int title_y = margin + 70;
+    int title_scale = max(3, min(6, w / 240));
+    int brand_scale = max(4, min(8, w / 180));
+    int body_scale = max(2, min(4, w / 360));
+    int slot_title_x;
+    int slot_title_y;
+    int slot_card_w;
+    int slot_card_h;
+    slotCardRect(0, slot_title_x, slot_title_y, slot_card_w, slot_card_h);
+
     Epd.clearWhiteBuffer();
-    Epd.drawRect(40, 40, ED060KD1_WIDTH - 80, ED060KD1_HEIGHT - 80, 0x00);
-    Epd.drawText("ESP32 ED060KD1 WIFI", 100, 110, 6, 0x00);
-    Epd.drawText("IMBREAD", 100, 235, 8, 0x00);
+    Epd.drawRect(margin, margin, w - margin * 2, h - margin * 2, 0x00);
+    Epd.drawText("ESP32 ED060KD1 WIFI", left_x, title_y, title_scale, 0x00);
+    Epd.drawText("IMBREAD", left_x, title_y + 120, brand_scale, 0x00);
 
     String sta = staIpString();
     if (!sta.isEmpty()) {
         String sta_line = String("STA IP ") + sta;
-        Epd.drawText("STA CONNECTED", 100, 380, 4, 0x00);
-        Epd.drawText(sta_line.c_str(), 100, 460, 4, 0x00);
+        Epd.drawText("STA CONNECTED", left_x, title_y + 270, body_scale, 0x00);
+        Epd.drawText(sta_line.c_str(), left_x, title_y + 350, body_scale, 0x00);
     } else if (sta_connecting) {
-        Epd.drawText("STA CONNECTING", 100, 380, 4, 0x00);
-        Epd.drawText("WAITING", 100, 460, 4, 0x88);
+        Epd.drawText("STA CONNECTING", left_x, title_y + 270, body_scale, 0x00);
+        Epd.drawText("WAITING", left_x, title_y + 350, body_scale, 0x88);
     } else {
-        Epd.drawText("STA NOT CONNECTED", 100, 380, 4, 0x00);
-        Epd.drawText("AP 192.168.4.1", 100, 460, 4, 0x00);
+        Epd.drawText("STA NOT CONNECTED", left_x, title_y + 270, body_scale, 0x00);
+        Epd.drawText("AP 192.168.4.1", left_x, title_y + 350, body_scale, 0x00);
     }
 
-    Epd.drawText("WEB UPLOAD 16 GRAY IMAGE", 100, 850, 3, 0x00);
-    Epd.drawText("WAIT 5S FOR INIT", 100, 930, 3, 0x00);
+    char size_line[40];
+    snprintf(size_line, sizeof(size_line), "UPLOAD %dX%d 16 GRAY", w, h);
+    Epd.drawText(size_line, left_x, h - margin - 170, max(2, body_scale - 1), 0x00);
+    Epd.drawText("WAIT 5S FOR INIT", left_x, h - margin - 90, max(2, body_scale - 1), 0x00);
 
-    Epd.drawLine(980, 80, 980, 990, 0x88);
-    Epd.drawText("SLOTS", 1030, 110, 4, 0x00);
+    if (slot_title_x > left_x + 440) {
+        Epd.drawLine(slot_title_x - 24, margin + 40, slot_title_x - 24, h - margin - 40, 0x88);
+    }
+    Epd.drawText("SLOTS", slot_title_x, margin + 70, body_scale, 0x00);
     if (next_slot >= 0) {
         char next_line[16];
         snprintf(next_line, sizeof(next_line), "NEXT S%02d", next_slot + 1);
-        Epd.drawText(next_line, 1194, 116, 3, 0x00);
+        Epd.drawText(next_line, slot_title_x + 160, margin + 76, max(2, body_scale - 1), 0x00);
     } else {
-        Epd.drawText("NO SLOT", 1194, 116, 3, 0x88);
+        Epd.drawText("NO SLOT", slot_title_x + 160, margin + 76, max(2, body_scale - 1), 0x88);
     }
 
     for (int slot = 0; slot < SLOT_COUNT; slot++) {
@@ -635,6 +734,13 @@ static void sendJsonStatus() {
     json += carousel_index;
     json += ",\"startupSlot\":";
     json += startup_slot;
+    json += ",\"display\":{\"width\":";
+    json += displayWidth();
+    json += ",\"height\":";
+    json += displayHeight();
+    json += ",\"frameBytes\":";
+    json += displayFrameBytes();
+    json += "}";
     json += "}";
     server.send(200, "application/json", json);
 }
@@ -656,7 +762,7 @@ static void handleSlots() {
         String path = slotPath(i);
         File f = LittleFS.exists(path) ? LittleFS.open(path, "r") : File();
         size_t size = f ? f.size() : 0;
-        bool exists = f && size == ED060KD1_FRAME_BYTES;
+        bool exists = f && size == displayFrameBytes();
         if (f) {
             f.close();
         }
@@ -683,11 +789,17 @@ static void handleSlots() {
     json += ",\"used\":";
     json += fs_ready ? LittleFS.usedBytes() : 0;
     json += ",\"slotSize\":";
-    json += SLOT_FILE_BYTES;
+    json += displayFrameBytes();
     json += ",\"maxSlots\":";
     json += theoreticalSlotCapacity();
     json += ",\"additionalSlots\":";
     json += additionalSlotCapacity();
+    json += "},\"display\":{\"width\":";
+    json += displayWidth();
+    json += ",\"height\":";
+    json += displayHeight();
+    json += ",\"frameBytes\":";
+    json += displayFrameBytes();
     json += "}}";
     server.send(200, "application/json", json);
 }
@@ -735,11 +847,11 @@ static void fillCalibratedRect(int x, int y, int w, int h, uint8_t level) {
     int y0 = y < 0 ? 0 : y;
     int x1 = x + w;
     int y1 = y + h;
-    if (x1 > ED060KD1_WIDTH) {
-        x1 = ED060KD1_WIDTH;
+    if (x1 > (int)displayWidth()) {
+        x1 = (int)displayWidth();
     }
-    if (y1 > ED060KD1_HEIGHT) {
-        y1 = ED060KD1_HEIGHT;
+    if (y1 > (int)displayHeight()) {
+        y1 = (int)displayHeight();
     }
     for (int py = y0; py < y1; py++) {
         for (int px = x0; px < x1; px++) {
@@ -754,31 +866,36 @@ static void fillCalibratedRect(int x, int y, int w, int h, uint8_t level) {
 static void drawDeveloperGrayscale() {
     cleanBeforeImageDisplay(1);
     Epd.clearWhiteBuffer();
-    const int margin_x = 36;
-    const int top = 78;
-    const int bar_h = ED060KD1_HEIGHT - 170;
-    const int bar_w = (ED060KD1_WIDTH - margin_x * 2) / 16;
-    Epd.drawText("ED060KD1 16 GRAY", 48, 24, 4, 0x00);
+    int dw = (int)displayWidth();
+    int dh = (int)displayHeight();
+    int margin_x = max(24, dw / 40);
+    int top = max(58, dh / 14);
+    int label_scale = max(2, min(4, dw / 360));
+    int bar_h = dh - top - max(90, dh / 9);
+    int bar_w = (dw - margin_x * 2) / 16;
+    Epd.drawText("ED060KD1 16 GRAY", margin_x + 12, max(16, top - 52), label_scale, 0x00);
     for (int level = 0; level < 16; level++) {
         int x = margin_x + level * bar_w;
-        int w = level == 15 ? ED060KD1_WIDTH - margin_x - x : bar_w;
+        int w = level == 15 ? dw - margin_x - x : bar_w;
         fillCalibratedRect(x, top, w, bar_h, (uint8_t)level);
         Epd.drawLine(x, top, x, top + bar_h, 0x88);
         char label[4];
         snprintf(label, sizeof(label), "%02d", level);
-        Epd.drawText(label, x + 14, ED060KD1_HEIGHT - 72, 4, 0x00);
+        Epd.drawText(label, x + max(4, bar_w / 7), dh - max(64, dh / 15), label_scale, 0x00);
     }
-    Epd.drawLine(ED060KD1_WIDTH - margin_x, top, ED060KD1_WIDTH - margin_x, top + bar_h, 0x88);
+    Epd.drawLine(dw - margin_x, top, dw - margin_x, top + bar_h, 0x88);
 }
 
 static void drawDeveloperCheckerboard() {
     cleanBeforeImageDisplay(1);
     Epd.clearWhiteBuffer();
     const int cell = 8;
-    for (int y = 0; y < ED060KD1_HEIGHT; y += cell) {
-        int h = y + cell > ED060KD1_HEIGHT ? ED060KD1_HEIGHT - y : cell;
-        for (int x = 0; x < ED060KD1_WIDTH; x += cell) {
-            int w = x + cell > ED060KD1_WIDTH ? ED060KD1_WIDTH - x : cell;
+    int dw = (int)displayWidth();
+    int dh = (int)displayHeight();
+    for (int y = 0; y < dh; y += cell) {
+        int h = y + cell > dh ? dh - y : cell;
+        for (int x = 0; x < dw; x += cell) {
+            int w = x + cell > dw ? dw - x : cell;
             uint8_t color = (((x / cell) + (y / cell)) & 1) ? 0xFF : 0x00;
             Epd.fillRect(x, y, w, h, color);
         }
@@ -789,54 +906,202 @@ static void drawDeveloperCheckerboard() {
 static void drawDeveloperResolution() {
     cleanBeforeImageDisplay(1);
     Epd.clearWhiteBuffer();
-    Epd.drawRect(0, 0, ED060KD1_WIDTH, ED060KD1_HEIGHT, 0x00);
-    Epd.drawRect(2, 2, ED060KD1_WIDTH - 4, ED060KD1_HEIGHT - 4, 0x00);
-    Epd.drawText("RESOLUTION TEST 1448X1072", 48, 32, 4, 0x00);
+    int dw = (int)displayWidth();
+    int dh = (int)displayHeight();
+    int text_scale = max(2, min(4, dw / 360));
+    Epd.drawRect(0, 0, dw, dh, 0x00);
+    Epd.drawRect(2, 2, dw - 4, dh - 4, 0x00);
+    char title[40];
+    snprintf(title, sizeof(title), "RESOLUTION TEST %dX%d", dw, dh);
+    Epd.drawText(title, 48, 32, text_scale, 0x00);
 
-    for (int x = 0; x < ED060KD1_WIDTH; x += 100) {
-        Epd.drawLine(x, 0, x, ED060KD1_HEIGHT - 1, (x % 500 == 0) ? 0x00 : 0xAA);
+    for (int x = 0; x < dw; x += 100) {
+        Epd.drawLine(x, 0, x, dh - 1, (x % 500 == 0) ? 0x00 : 0xAA);
     }
-    for (int y = 0; y < ED060KD1_HEIGHT; y += 100) {
-        Epd.drawLine(0, y, ED060KD1_WIDTH - 1, y, (y % 500 == 0) ? 0x00 : 0xAA);
+    for (int y = 0; y < dh; y += 100) {
+        Epd.drawLine(0, y, dw - 1, y, (y % 500 == 0) ? 0x00 : 0xAA);
     }
-    Epd.drawLine(ED060KD1_WIDTH / 2, 0, ED060KD1_WIDTH / 2, ED060KD1_HEIGHT - 1, 0x00);
-    Epd.drawLine(0, ED060KD1_HEIGHT / 2, ED060KD1_WIDTH - 1, ED060KD1_HEIGHT / 2, 0x00);
+    Epd.drawLine(dw / 2, 0, dw / 2, dh - 1, 0x00);
+    Epd.drawLine(0, dh / 2, dw - 1, dh / 2, 0x00);
 
-    Epd.drawText("1PX V", 54, 112, 3, 0x00);
-    for (int x = 48; x < 408; x += 2) {
-        Epd.drawLine(x, 170, x, 382, 0x00);
+    int left = max(36, dw / 30);
+    int top = max(100, dh / 9);
+    int block_w = max(120, dw / 4);
+    int block_h = max(120, dh / 5);
+    Epd.drawText("1PX V", left, top, max(2, text_scale - 1), 0x00);
+    for (int x = left; x < min(dw - 20, left + block_w); x += 2) {
+        Epd.drawLine(x, top + 58, x, min(dh - 20, top + 58 + block_h), 0x00);
     }
-    Epd.drawText("1PX H", 54, 430, 3, 0x00);
-    for (int y = 486; y < 698; y += 2) {
-        Epd.drawLine(48, y, 408, y, 0x00);
+    Epd.drawText("1PX H", left, top + block_h + 110, max(2, text_scale - 1), 0x00);
+    for (int y = top + block_h + 168; y < min(dh - 20, top + block_h * 2 + 168); y += 2) {
+        Epd.drawLine(left, y, min(dw - 20, left + block_w), y, 0x00);
     }
 
-    Epd.drawText("1PX DOT MATRIX", 548, 112, 3, 0x00);
-    for (int y = 168; y < 428; y += 4) {
-        for (int x = 548; x < 808; x += 4) {
+    int mid = max(left + block_w + 100, dw / 3);
+    Epd.drawText("1PX DOT MATRIX", mid, top, max(2, text_scale - 1), 0x00);
+    for (int y = top + 58; y < min(dh - 20, top + 58 + block_h); y += 4) {
+        for (int x = mid; x < min(dw - 20, mid + block_w); x += 4) {
             Epd.drawPixel(x, y, 0x00);
         }
         yield();
     }
 
-    Epd.drawText("BOXES", 548, 492, 3, 0x00);
+    Epd.drawText("BOXES", mid, top + block_h + 110, max(2, text_scale - 1), 0x00);
     for (int i = 0; i < 8; i++) {
-        int d = 32 + i * 36;
-        Epd.drawRect(548 + i * 16, 552 + i * 12, d, d, 0x00);
+        int d = 20 + i * max(16, min(dw, dh) / 38);
+        Epd.drawRect(mid + i * 14, top + block_h + 168 + i * 10, d, d, 0x00);
     }
 
-    Epd.drawText("TEXT SCALE 2", 990, 158, 2, 0x00);
-    Epd.drawText("TEXT SCALE 3", 990, 220, 3, 0x00);
-    Epd.drawText("TEXT SCALE 4", 990, 310, 4, 0x00);
-    Epd.drawText("TEXT SCALE 5", 990, 430, 5, 0x00);
-    Epd.drawText("PIXEL CHECK", 990, 610, 4, 0x00);
-    for (int y = 690; y < 890; y++) {
-        for (int x = 990; x < 1190; x++) {
+    int right = max(mid + block_w + 80, dw * 68 / 100);
+    Epd.drawText("TEXT SCALE 2", right, top + 30, 2, 0x00);
+    Epd.drawText("TEXT SCALE 3", right, top + 92, 3, 0x00);
+    Epd.drawText("TEXT SCALE 4", right, top + 182, 4, 0x00);
+    Epd.drawText("TEXT SCALE 5", right, top + 302, 5, 0x00);
+    Epd.drawText("PIXEL CHECK", right, top + 482, text_scale, 0x00);
+    for (int y = top + 560; y < min(dh - 20, top + 760); y++) {
+        for (int x = right; x < min(dw - 20, right + 200); x++) {
             if (((x ^ y) & 1) == 0) {
                 Epd.drawPixel(x, y, 0x00);
             }
         }
         yield();
+    }
+}
+
+static int monthFromBuildDate(const char* mon) {
+    static const char* names[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+    for (int i = 0; i < 12; i++) {
+        if (strncmp(mon, names[i], 3) == 0) {
+            return i + 1;
+        }
+    }
+    return 1;
+}
+
+static void currentCalendarDate(int& year, int& month, int& day) {
+    time_t now = time(nullptr);
+    if (now > 1600000000) {
+        struct tm local_time;
+        localtime_r(&now, &local_time);
+        year = local_time.tm_year + 1900;
+        month = local_time.tm_mon + 1;
+        day = local_time.tm_mday;
+        return;
+    }
+
+    char mon[4] = {__DATE__[0], __DATE__[1], __DATE__[2], 0};
+    month = monthFromBuildDate(mon);
+    day = atoi(__DATE__ + 4);
+    year = atoi(__DATE__ + 7);
+}
+
+static bool isLeapYear(int year) {
+    return (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+}
+
+static int daysInMonth(int year, int month) {
+    static const uint8_t days[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+    if (month == 2 && isLeapYear(year)) {
+        return 29;
+    }
+    return days[month - 1];
+}
+
+static int weekdayMondayFirst(int year, int month, int day) {
+    if (month < 3) {
+        month += 12;
+        year--;
+    }
+    int k = year % 100;
+    int j = year / 100;
+    int h = (day + (13 * (month + 1)) / 5 + k + k / 4 + j / 4 + 5 * j) % 7;
+    return (h + 5) % 7;
+}
+
+static void drawDeveloperCalendar() {
+    cleanBeforeImageDisplay(1);
+    Epd.clearWhiteBuffer();
+
+    int dw = (int)displayWidth();
+    int dh = (int)displayHeight();
+    int year;
+    int month;
+    int today;
+    currentCalendarDate(year, month, today);
+
+    static const char* month_names[] = {"JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"};
+    static const char* weekdays[] = {"MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"};
+
+    int margin = max(28, min(dw, dh) / 30);
+    int title_scale = max(4, min(8, dw / 190));
+    int text_scale = max(2, min(4, dw / 380));
+    int small_scale = max(1, min(3, dw / 520));
+    int side_w = max(260, dw / 4);
+    int grid_x = margin;
+    int grid_y = margin + 210;
+    int grid_w = dw - margin * 3 - side_w;
+    int grid_h = dh - grid_y - margin;
+    int cell_w = grid_w / 7;
+    int cell_h = grid_h / 7;
+
+    if (cell_w < 54 || cell_h < 42) {
+        grid_w = dw - margin * 2;
+        side_w = 0;
+        cell_w = grid_w / 7;
+        cell_h = max(36, (dh - grid_y - margin) / 7);
+    }
+
+    Epd.drawText("CALENDAR", margin, margin + 22, title_scale, 0x00);
+    char date_title[32];
+    snprintf(date_title, sizeof(date_title), "%s %04d", month_names[month - 1], year);
+    Epd.drawText(date_title, margin, margin + 120, text_scale + 1, 0x00);
+
+    for (int i = 0; i < 7; i++) {
+        int x = grid_x + i * cell_w;
+        Epd.drawText(weekdays[i], x + 10, grid_y - 46, small_scale + 1, i >= 5 ? 0x44 : 0x00);
+    }
+
+    int first = weekdayMondayFirst(year, month, 1);
+    int max_day = daysInMonth(year, month);
+    int day = 1;
+    for (int row = 0; row < 6; row++) {
+        for (int col = 0; col < 7; col++) {
+            int x = grid_x + col * cell_w;
+            int y = grid_y + row * cell_h;
+            Epd.drawRect(x, y, cell_w, cell_h, 0x88);
+            if ((row + col) & 1) {
+                Epd.fillRect(x + 1, y + 1, cell_w - 2, cell_h - 2, 0xEE);
+            }
+            int index = row * 7 + col;
+            if (index < first || day > max_day) {
+                continue;
+            }
+            char label[4];
+            snprintf(label, sizeof(label), "%02d", day);
+            if (day == today) {
+                Epd.fillRect(x + 5, y + 5, cell_w - 10, cell_h - 10, 0x00);
+                Epd.drawText(label, x + 18, y + 18, text_scale, 0xFF);
+            } else {
+                Epd.drawText(label, x + 18, y + 18, text_scale, col >= 5 ? 0x44 : 0x00);
+            }
+            day++;
+        }
+        yield();
+    }
+
+    if (side_w > 0) {
+        int sx = dw - margin - side_w;
+        int sy = grid_y;
+        Epd.drawRect(sx, sy, side_w, grid_h, 0x00);
+        Epd.drawText("TODAY", sx + 24, sy + 34, text_scale, 0x00);
+        char day_text[8];
+        snprintf(day_text, sizeof(day_text), "%02d", today);
+        Epd.drawText(day_text, sx + 28, sy + 116, title_scale + 2, 0x00);
+        Epd.drawLine(sx + 24, sy + 250, sx + side_w - 24, sy + 250, 0x88);
+        Epd.drawText("EPD WIFI FRAME", sx + 24, sy + 300, small_scale + 1, 0x00);
+        Epd.drawText("16 GRAY READY", sx + 24, sy + 360, small_scale + 1, 0x44);
+        Epd.drawText("SLOT CAROUSEL", sx + 24, sy + 420, small_scale + 1, 0x44);
+        Epd.drawText("WEB UPLOADER", sx + 24, sy + 480, small_scale + 1, 0x00);
     }
 }
 
@@ -862,6 +1127,14 @@ static void handleDevResolution() {
     }
     drawDeveloperResolution();
     endImmediateDisplay(Epd.updateScreen(MODE_GC16), "Resolution test shown");
+}
+
+static void handleDevCalendar() {
+    if (!beginImmediateDisplay("Drawing calendar demo")) {
+        return;
+    }
+    drawDeveloperCalendar();
+    endImmediateDisplay(Epd.updateScreen(MODE_GC16), "Calendar demo shown");
 }
 
 static void handleDevRepair() {
@@ -983,6 +1256,27 @@ static void handleWifiClear() {
     server.send(200, "text/plain", status_message);
 }
 
+static void handleDisplayConfig() {
+    markUserOperation();
+    if (display_busy || pending_show || upload_in_progress) {
+        server.send(409, "text/plain", "Display busy");
+        return;
+    }
+
+    uint32_t width = (uint32_t)server.arg("width").toInt();
+    uint32_t height = (uint32_t)server.arg("height").toInt();
+    if (!validDisplayConfig(width, height)) {
+        server.send(400, "text/plain", "Invalid resolution. Width must be a multiple of 8, range 320x240 to 1872x1404.");
+        return;
+    }
+
+    saveDisplayConfig(width, height);
+    status_message = "Resolution saved, restarting";
+    server.send(200, "text/plain", status_message);
+    delay(400);
+    ESP.restart();
+}
+
 static void handleCarousel() {
     markUserOperation();
     if (server.hasArg("enabled")) {
@@ -990,10 +1284,7 @@ static void handleCarousel() {
     }
     if (server.hasArg("interval")) {
         uint32_t interval = (uint32_t)server.arg("interval").toInt();
-        if (interval < 10) {
-            interval = 10;
-        }
-        carousel_interval_s = interval;
+        carousel_interval_s = clampCarouselInterval(interval);
     }
     last_carousel_ms = millis();
     saveCarouselConfig();
@@ -1062,7 +1353,7 @@ static void handleUploadDone() {
         upload_file.close();
     }
 
-    if (upload_ok && upload_offset == ED060KD1_FRAME_BYTES && validSlot(upload_slot)) {
+    if (upload_ok && upload_offset == displayFrameBytes() && validSlot(upload_slot)) {
         startup_slot = upload_slot;
         saveStartupSlot();
         pending_slot = upload_slot;
@@ -1105,7 +1396,7 @@ static void handleUploadStream() {
         if (!upload_ok || !upload_file) {
             return;
         }
-        if (upload_offset + up.currentSize > ED060KD1_FRAME_BYTES) {
+        if (upload_offset + up.currentSize > displayFrameBytes()) {
             upload_ok = false;
             status_message = "Upload too large";
             return;
@@ -1125,7 +1416,7 @@ static void handleUploadStream() {
         if (upload_file) {
             upload_file.close();
         }
-        if (upload_offset != ED060KD1_FRAME_BYTES) {
+        if (upload_offset != displayFrameBytes()) {
             upload_ok = false;
         }
         status_message = upload_ok ? "Upload received" : "Upload incomplete";
@@ -1151,6 +1442,7 @@ static void startWiFi() {
     Serial.printf("Open AP: %s, IP: %s\n", AP_SSID, WiFi.softAPIP().toString().c_str());
     loadWifiConfig();
     connectSTA(true);
+    configTime(8 * 3600, 0, "pool.ntp.org", "ntp.aliyun.com", "time.windows.com");
     last_sta_status = (wl_status_t)WiFi.status();
     last_sta_ip = staIpString();
 }
@@ -1165,11 +1457,13 @@ static void startServer() {
     server.on("/wifi", HTTP_POST, handleWifiConfig);
     server.on("/wifi/scan", HTTP_GET, handleWifiScan);
     server.on("/wifi/clear", HTTP_POST, handleWifiClear);
+    server.on("/display-config", HTTP_POST, handleDisplayConfig);
     server.on("/carousel", HTTP_POST, handleCarousel);
     server.on("/startup-slot", HTTP_POST, handleStartupSlot);
     server.on("/dev/grayscale", HTTP_POST, handleDevGrayscale);
     server.on("/dev/checker", HTTP_POST, handleDevChecker);
     server.on("/dev/resolution", HTTP_POST, handleDevResolution);
+    server.on("/dev/calendar", HTTP_POST, handleDevCalendar);
     server.on("/dev/repair", HTTP_POST, handleDevRepair);
     server.on("/slot/show", HTTP_POST, handleSlotShow);
     server.on("/slot/delete", HTTP_POST, handleSlotDelete);
@@ -1261,7 +1555,9 @@ static void serviceCarousel() {
     if (!carousel_enabled || display_busy || pending_show || upload_in_progress) {
         return;
     }
-    if (millis() - last_carousel_ms < carousel_interval_s * 1000UL) {
+    uint64_t elapsed_ms = (uint32_t)(millis() - last_carousel_ms);
+    uint64_t interval_ms = (uint64_t)carousel_interval_s * 1000ULL;
+    if (elapsed_ms < interval_ms) {
         return;
     }
 
@@ -1289,10 +1585,11 @@ void setup() {
         Serial.println("PSRAM init failed");
     }
 
+    loadDisplayConfig();
     loadCarouselConfig();
     startFilesystem();
 
-    if (!Epd.begin()) {
+    if (!Epd.begin(configured_width, configured_height)) {
         Serial.println("ED060KD1 init failed");
     }
 

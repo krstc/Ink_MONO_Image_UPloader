@@ -10,14 +10,15 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>ED060KD1 WiFi Uploader</title>
 <style>
-:root{color-scheme:light;--ink:#1d1d1f;--muted:#6e6e73;--line:rgba(0,0,0,.12);--soft:#f5f5f7;--panel:rgba(255,255,255,.88);--action:#0071e3;--accent:#34c759;--warn:#ff3b30;--shadow:0 18px 46px rgba(0,0,0,.08)}
+:root{color-scheme:light;--ink:#1d1d1f;--muted:#6e6e73;--line:rgba(0,0,0,.12);--soft:#f5f5f7;--panel:rgba(255,255,255,.88);--action:#0071e3;--accent:#34c759;--warn:#ff3b30;--shadow:0 18px 46px rgba(0,0,0,.08);--display-aspect:1448 / 1072}
 *{box-sizing:border-box}
 body{margin:0;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,system-ui,Arial,sans-serif;background:var(--soft);color:var(--ink);-webkit-font-smoothing:antialiased}
 header{height:66px;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:0 24px;background:rgba(255,255,255,.72);border-bottom:1px solid var(--line);backdrop-filter:saturate(180%) blur(18px);position:sticky;top:0;z-index:2}
 h1{margin:0;font-size:20px;font-weight:700;letter-spacing:0}
-main{display:grid;grid-template-columns:minmax(320px,390px) minmax(0,1fr);gap:18px;padding:18px;min-height:calc(100vh - 66px)}
+main{display:grid;grid-template-columns:minmax(300px,355px) minmax(0,1fr);gap:18px;padding:18px;min-height:calc(100vh - 66px);align-items:start}
 .panel{background:var(--panel);border:1px solid rgba(255,255,255,.72);border-radius:22px;padding:16px;box-shadow:var(--shadow);backdrop-filter:saturate(180%) blur(18px);min-width:0}
 .stack{display:flex;flex-direction:column;gap:12px}
+.display-column{display:flex;flex-direction:column;gap:12px;min-width:0}
 .section{border-top:1px solid var(--line);padding-top:14px;min-width:0}
 .section:first-child{border-top:0;padding-top:0}
 .title{font-size:13px;font-weight:750;margin:0 0 10px;color:#2b2b2f}
@@ -35,36 +36,38 @@ button:disabled{opacity:.55;cursor:not-allowed}
 .row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:9px;min-width:0}
 .row3{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,1fr);gap:9px;min-width:0}
 .row4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;min-width:0}
+.row5{display:grid;grid-template-columns:repeat(auto-fit,minmax(72px,1fr));gap:9px;min-width:0}
 .rotate-row{grid-template-columns:42px 42px minmax(0,1fr)}
 .inline{display:flex;align-items:center;gap:8px}
 .inline input[type=checkbox]{width:auto;height:auto}
 .status{font-size:12px;line-height:1.55;color:var(--muted);background:rgba(255,255,255,.7);border:1px solid var(--line);border-radius:14px;padding:10px 12px;min-height:44px;white-space:pre-wrap;overflow-wrap:anywhere}
-.preview-wrap{height:calc(100vh - 102px);display:flex;align-items:center;justify-content:center;background:#fff;border:1px solid rgba(255,255,255,.8);border-radius:22px;overflow:hidden;box-shadow:var(--shadow);min-width:0}
+.preview-wrap{width:100%;aspect-ratio:var(--display-aspect);max-height:calc(100vh - 205px);min-height:460px;display:flex;align-items:center;justify-content:center;background:#fff;border:1px solid rgba(255,255,255,.8);border-radius:22px;overflow:hidden;box-shadow:var(--shadow);min-width:0}
 canvas{max-width:100%;max-height:100%;background:#fff;box-shadow:0 4px 24px rgba(0,0,0,.10);touch-action:none}
 footer{color:var(--soft);background:var(--soft);font-size:11px;text-align:center;padding:0 0 12px;text-shadow:none}
-.slots{display:grid;grid-template-columns:repeat(auto-fit,minmax(112px,1fr));gap:8px;min-width:0}
-.slot{position:relative;border:1px solid var(--line);border-radius:14px;padding:9px;background:rgba(255,255,255,.72);font-size:12px;min-width:0;overflow:hidden;cursor:pointer;transition:transform .16s ease,background .16s ease,border-color .16s ease,box-shadow .16s ease}
+.slot-strip{background:var(--panel);border:1px solid rgba(255,255,255,.72);border-radius:22px;padding:12px 14px;box-shadow:var(--shadow);backdrop-filter:saturate(180%) blur(18px);min-width:0}
+.slots{display:grid;grid-template-rows:repeat(2,auto);grid-auto-flow:column;grid-auto-columns:112px;gap:8px;min-width:0;overflow-x:auto;overflow-y:hidden;padding:2px 3px 8px;scroll-snap-type:x proximity}
+.slot{position:relative;border:1px solid var(--line);border-radius:14px;padding:8px;background:rgba(255,255,255,.72);font-size:12px;min-width:0;overflow:hidden;cursor:pointer;scroll-snap-align:start;transition:transform .16s ease,background .16s ease,border-color .16s ease,box-shadow .16s ease}
 .slot:hover{transform:translateY(-1px)}
 .slot.filled{border-color:rgba(52,199,89,.45);background:rgba(52,199,89,.08)}
 .slot.selected{animation:bluePulse 1.05s ease-in-out infinite;border-color:#0071e3;background:rgba(0,113,227,.10)}
 .slot.current{animation:greenPulse 1.15s ease-in-out infinite;border-color:#34c759;background:rgba(52,199,89,.12)}
 .slot-head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
 .slot b{display:block;font-size:12px;margin-bottom:4px}
-.slot-thumb{width:44px;height:33px;flex:0 0 auto;border:1px solid var(--line);border-radius:8px;background:linear-gradient(135deg,#f5f5f7,#e8e8ed);object-fit:cover}
-.slot .actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px;margin-top:8px}
-.slot button{height:30px;font-size:11px;padding:0 6px}
+.slot-thumb{width:42px;height:31px;flex:0 0 auto;border:1px solid var(--line);border-radius:8px;background:linear-gradient(135deg,#f5f5f7,#e8e8ed);object-fit:cover}
+.slot .actions{display:flex;gap:4px;margin-top:8px}
+.slot button{height:28px;font-size:10px;padding:0 4px;flex:1}
 .tiny{font-size:11px;color:var(--muted)}
 .value{font-size:12px;color:var(--ink);font-variant-numeric:tabular-nums}
 @keyframes bluePulse{0%,100%{box-shadow:0 0 0 0 rgba(0,113,227,.32)}50%{box-shadow:0 0 0 5px rgba(0,113,227,.14)}}
 @keyframes greenPulse{0%,100%{box-shadow:0 0 0 0 rgba(52,199,89,.42)}50%{box-shadow:0 0 0 6px rgba(52,199,89,.16)}}
-@media(max-width:980px){header{padding:0 16px}main{grid-template-columns:1fr;padding:12px}.preview-wrap{height:62vh;order:-1}.panel{border-radius:18px}}
-@media(max-width:520px){.row,.row3,.row4{grid-template-columns:1fr}.rotate-row{grid-template-columns:42px 42px minmax(0,1fr)}}
+@media(max-width:980px){header{padding:0 16px}main{grid-template-columns:1fr;padding:12px}.display-column{order:-1}.preview-wrap{min-height:320px;max-height:56vh}.panel,.slot-strip{border-radius:18px}}
+@media(max-width:520px){.row,.row3,.row4,.row5{grid-template-columns:1fr}.rotate-row{grid-template-columns:42px 42px minmax(0,1fr)}.slots{grid-auto-columns:104px}}
 </style>
 </head>
 <body>
 <header>
   <h1>ED060KD1 WiFi Uploader</h1>
-  <div class="tiny">1448 x 1072 / 16 gray / 12 slots</div>
+  <div class="tiny" id="displayMeta">1448 x 1072 / 16 gray / 12 slots</div>
 </header>
 <main>
   <section class="panel stack">
@@ -130,9 +133,10 @@ footer{color:var(--soft);background:var(--soft);font-size:11px;text-align:center
 
     <div class="section">
       <p class="title">Carousel</p>
-      <div class="row">
+      <div class="row3">
         <label class="inline" style="margin-top:24px"><input id="carouselEnabled" type="checkbox"> Enabled</label>
-        <div><label for="interval">Interval Seconds</label><input id="interval" type="number" min="10" max="86400" value="60"></div>
+        <div><label for="interval">Interval</label><input id="interval" type="number" min="10" max="2592000" value="60"></div>
+        <div><label for="intervalUnit">Unit</label><select id="intervalUnit"><option value="s">Seconds</option><option value="m">Minutes</option><option value="h">Hours</option><option value="d">Days</option></select></div>
       </div>
       <div class="row" style="margin-top:8px">
         <div><label for="startupSlot">Startup Slot</label><select id="startupSlot"></select></div>
@@ -143,17 +147,19 @@ footer{color:var(--soft);background:var(--soft);font-size:11px;text-align:center
 
     <div class="section">
       <p class="title">Developer</p>
-      <div class="row4">
+      <div class="row5">
         <button class="secondary" id="devGray">16 Gray</button>
         <button class="secondary" id="devChecker">Checker</button>
         <button class="secondary" id="devResolution">Resolution</button>
+        <button class="secondary" id="devCalendar">Calendar</button>
         <button class="danger" id="devRepair">Repair</button>
       </div>
-    </div>
-
-    <div class="section">
-      <p class="title">Slots</p>
-      <div id="slots" class="slots"></div>
+      <div class="row3" style="margin-top:8px">
+        <div><label for="displayW">Display W</label><input id="displayW" type="number" min="320" max="1872" step="8" value="1448"></div>
+        <div><label for="displayH">Display H</label><input id="displayH" type="number" min="240" max="1404" step="1" value="1072"></div>
+        <button class="secondary" id="displaySave" style="margin-top:23px">Save Size</button>
+      </div>
+      <div class="tiny" style="margin-top:6px">Width must be a multiple of 8. Saving restarts the display.</div>
     </div>
 
     <div class="section">
@@ -164,13 +170,20 @@ footer{color:var(--soft);background:var(--soft);font-size:11px;text-align:center
       </div>
     </div>
   </section>
-  <section class="preview-wrap">
-    <canvas id="canvas" width="1448" height="1072"></canvas>
+  <section class="display-column">
+    <div class="preview-wrap">
+      <canvas id="canvas" width="1448" height="1072"></canvas>
+    </div>
+    <div class="slot-strip">
+      <p class="title">Slots</p>
+      <div id="slots" class="slots"></div>
+    </div>
   </section>
 </main>
 <footer>copyright by imbread</footer>
 <script>
-const W=1448,H=1072,BYTES=W*H/2,SLOTS=12;
+let W=1448,H=1072,BYTES=W*H/2;
+const SLOTS=12;
 const EMPTY_THUMB='data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
 const $=id=>document.getElementById(id);
 const canvas=$('canvas');
@@ -186,9 +199,30 @@ let startupSlot=-1;
 let didAutoSelectUpload=false;
 let pendingFileSlot=-1;
 let pendingThumb=null;
+const INTERVAL_UNITS={s:1,m:60,h:3600,d:86400};
 
 function clamp(v,a,b){return Math.max(a,Math.min(b,v));}
 function status(msg){$('status').textContent=msg;}
+function updateDisplaySize(display){
+  if(!display)return;
+  const w=Math.max(320,Number(display.width)||1448);
+  const h=Math.max(240,Number(display.height)||1072);
+  document.documentElement.style.setProperty('--display-aspect',w+' / '+h);
+  $('displayMeta').textContent=w+' x '+h+' / 16 gray / '+SLOTS+' slots';
+  if(w===W&&h===H)return;
+  W=w;H=h;BYTES=Math.round(W*H/2);
+  canvas.width=W;canvas.height=H;
+  $('displayW').value=W;
+  $('displayH').value=H;
+  $('offsetX').min=-Math.round(W*0.9);
+  $('offsetX').max=Math.round(W*0.9);
+  $('offsetY').min=-Math.round(H*0.9);
+  $('offsetY').max=Math.round(H*0.9);
+  packed=null;
+  pendingThumb=null;
+  $('upload').disabled=true;
+  drawSource();
+}
 function syncValues(){
   $('scale').value=crop.scale;$('offsetX').value=crop.x;$('offsetY').value=crop.y;
   $('scaleV').textContent=Number(crop.scale).toFixed(2);
@@ -248,6 +282,34 @@ function findNearestEmptySlot(startSlot){
 
 function autoSelectEmptySlot(startSlot){
   selectSlot(findNearestEmptySlot(startSlot));
+}
+
+function splitIntervalSeconds(seconds){
+  seconds=Math.max(10,Number(seconds)||60);
+  if(seconds%86400===0)return {value:seconds/86400,unit:'d'};
+  if(seconds%3600===0)return {value:seconds/3600,unit:'h'};
+  if(seconds%60===0)return {value:seconds/60,unit:'m'};
+  return {value:seconds,unit:'s'};
+}
+
+function updateIntervalRules(){
+  const unit=$('intervalUnit').value;
+  $('interval').min=unit==='s'?10:1;
+  $('interval').max=unit==='d'?30:unit==='h'?720:unit==='m'?43200:2592000;
+}
+
+function setIntervalControls(seconds){
+  if(document.activeElement===$('interval')||document.activeElement===$('intervalUnit'))return;
+  const parts=splitIntervalSeconds(seconds);
+  $('intervalUnit').value=parts.unit;
+  updateIntervalRules();
+  $('interval').value=parts.value;
+}
+
+function readIntervalSeconds(){
+  const unit=$('intervalUnit').value;
+  const value=Math.max(unit==='s'?10:1,Number($('interval').value)||1);
+  return Math.round(clamp(value*INTERVAL_UNITS[unit],10,2592000));
 }
 
 function makeCanvasThumb(){
@@ -425,11 +487,12 @@ async function post(url){
 
 async function refreshSlots(uploadCompletedSlot=null){
   const j=await fetch('/slots').then(r=>r.json());
+  updateDisplaySize(j.display);
   slotsSnapshot=j.slots||[];
   currentDisplayedSlot=Number.isFinite(Number(j.currentSlot))?Number(j.currentSlot):-1;
   startupSlot=Number.isFinite(Number(j.startupSlot))?Number(j.startupSlot):-1;
   $('carouselEnabled').checked=j.carousel.enabled;
-  $('interval').value=j.carousel.interval;
+  setIntervalControls(j.carousel.interval);
   $('startupSlot').value=startupSlot;
 
   if(!didAutoSelectUpload){
@@ -483,6 +546,7 @@ function deleteSlot(slot){
 async function pollStatus(){
   try{
     const j=await fetch('/status').then(r=>r.json());
+    updateDisplaySize(j.display);
     $('net').textContent='AP: ED060KD1-WIFI / open / '+j.ap+'\nSTA: '+(j.staConnected?j.sta:'not connected')+'\nSSID: '+(j.ssid||'-');
     if(Number.isFinite(Number(j.currentSlot))){
       currentDisplayedSlot=Number(j.currentSlot);
@@ -536,13 +600,30 @@ function clearWifi(){
 
 function saveCarousel(){
   const en=$('carouselEnabled').checked?'1':'0';
-  const interval=Math.max(10,Number($('interval').value)||60);
+  const interval=readIntervalSeconds();
   post('/carousel?enabled='+en+'&interval='+interval);
 }
 
 function repairDisplay(){
   if(confirm('Repair mode will run 10 full black/white refresh cycles. Continue?')){
     post('/dev/repair');
+  }
+}
+
+async function saveDisplaySize(){
+  const w=Math.round(Number($('displayW').value)||1448);
+  const h=Math.round(Number($('displayH').value)||1072);
+  if(w<320||h<240||w>1872||h>1404||w%8!==0||w*h>2800000){
+    status('Invalid resolution: width multiple of 8, max 1872 x 1404');
+    return;
+  }
+  if(!confirm('Save display size '+w+' x '+h+' and restart ESP32?'))return;
+  try{
+    const r=await fetch('/display-config?width='+w+'&height='+h,{method:'POST'});
+    const t=await r.text();
+    status(t);
+  }catch(e){
+    status('Display size save failed');
   }
 }
 
@@ -557,8 +638,8 @@ canvas.addEventListener('mousedown',e=>{
 });
 window.addEventListener('mousemove',e=>{
   if(!drag)return;
-  crop.x=clamp(drag.cx+(e.clientX-drag.x)*drag.sx,-1100,1100);
-  crop.y=clamp(drag.cy+(e.clientY-drag.y)*drag.sy,-900,900);
+  crop.x=clamp(drag.cx+(e.clientX-drag.x)*drag.sx,-Math.round(W*0.9),Math.round(W*0.9));
+  crop.y=clamp(drag.cy+(e.clientY-drag.y)*drag.sy,-Math.round(H*0.9),Math.round(H*0.9));
   syncValues();
   drawSource();
 });
@@ -579,8 +660,8 @@ canvas.addEventListener('touchstart',e=>{
 canvas.addEventListener('touchmove',e=>{
   if(!drag||e.touches.length!==1)return;
   const t=e.touches[0];
-  crop.x=clamp(drag.cx+(t.clientX-drag.x)*drag.sx,-1100,1100);
-  crop.y=clamp(drag.cy+(t.clientY-drag.y)*drag.sy,-900,900);
+  crop.x=clamp(drag.cx+(t.clientX-drag.x)*drag.sx,-Math.round(W*0.9),Math.round(W*0.9));
+  crop.y=clamp(drag.cy+(t.clientY-drag.y)*drag.sy,-Math.round(H*0.9),Math.round(H*0.9));
   syncValues();
   drawSource();
 },{passive:true});
@@ -627,6 +708,7 @@ function init(){
   $('ssidList').onchange=()=>{$('ssid').value=$('ssidList').value;};
   $('wifiSave').onclick=saveWifi;
   $('wifiClear').onclick=clearWifi;
+  $('intervalUnit').onchange=updateIntervalRules;
   $('carouselSave').onclick=saveCarousel;
   $('startupSave').onclick=()=>setStartupSlot($('startupSlot').value,false);
   $('startupSlot').onchange=()=>{
@@ -637,7 +719,9 @@ function init(){
   $('devGray').onclick=()=>post('/dev/grayscale');
   $('devChecker').onclick=()=>post('/dev/checker');
   $('devResolution').onclick=()=>post('/dev/resolution');
+  $('devCalendar').onclick=()=>post('/dev/calendar');
   $('devRepair').onclick=repairDisplay;
+  $('displaySave').onclick=saveDisplaySize;
   syncValues();
   drawEmpty();
   refreshSlots();

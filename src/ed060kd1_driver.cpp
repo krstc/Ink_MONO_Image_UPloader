@@ -8,7 +8,7 @@
 
 static const char* TAG = "ed060kd1";
 
-static const EpdDisplay_t ED060KD1_PANEL = {
+static const EpdDisplay_t ED060KD1_DEFAULT_PANEL = {
     ED060KD1_WIDTH,
     ED060KD1_HEIGHT,
     8,
@@ -73,10 +73,22 @@ static const uint8_t FONT5X7_UPPER[26][7] = {
 };
 
 bool ED060KD1Driver::begin() {
+    return begin(ED060KD1_DEFAULT_WIDTH, ED060KD1_DEFAULT_HEIGHT);
+}
+
+bool ED060KD1Driver::begin(int panel_width, int panel_height) {
+    if (panel_width < 64 || panel_height < 64 || (panel_width & 1) != 0) {
+        panel_width = ED060KD1_DEFAULT_WIDTH;
+        panel_height = ED060KD1_DEFAULT_HEIGHT;
+    }
+
     gpio_set_direction(ED060KD1_PANEL_POWER_GPIO, GPIO_MODE_OUTPUT);
     powerOff();
 
-    epd_init(&epd_board_v7, &ED060KD1_PANEL, EPD_LUT_64K);
+    panel_ = ED060KD1_DEFAULT_PANEL;
+    panel_.width = panel_width;
+    panel_.height = panel_height;
+    epd_init(&epd_board_v7, &panel_, EPD_LUT_64K);
     epd_set_vcom(1560);
     hl_ = epd_hl_init(EPD_BUILTIN_WAVEFORM);
     epd_set_rotation(EPD_ROT_LANDSCAPE);
@@ -100,6 +112,10 @@ int ED060KD1Driver::width() const {
 
 int ED060KD1Driver::height() const {
     return epd_rotated_display_height();
+}
+
+size_t ED060KD1Driver::frameBytes() const {
+    return ((size_t)width() * (size_t)height()) / 2;
 }
 
 int ED060KD1Driver::temperature() {
@@ -126,14 +142,15 @@ void ED060KD1Driver::panelPowerOff() {
 }
 
 void ED060KD1Driver::clearWhiteBuffer() {
-    memset(framebuffer(), 0xFF, ED060KD1_FRAME_BYTES);
+    memset(framebuffer(), 0xFF, frameBytes());
 }
 
 void ED060KD1Driver::markBuffersWhite() {
-    memset(hl_.front_fb, 0xFF, ED060KD1_FRAME_BYTES);
-    memset(hl_.back_fb, 0xFF, ED060KD1_FRAME_BYTES);
-    memset(hl_.difference_fb, 0x00, ED060KD1_FRAME_BYTES * 2);
-    memset(hl_.dirty_lines, 0x00, ED060KD1_HEIGHT * sizeof(bool));
+    size_t fb_bytes = frameBytes();
+    memset(hl_.front_fb, 0xFF, fb_bytes);
+    memset(hl_.back_fb, 0xFF, fb_bytes);
+    memset(hl_.difference_fb, 0x00, fb_bytes * 2);
+    memset(hl_.dirty_lines, 0x00, height() * sizeof(bool));
 }
 
 bool ED060KD1Driver::updateScreen(enum EpdDrawMode mode) {
@@ -196,7 +213,7 @@ void ED060KD1Driver::whiteCleanCycle() {
 }
 
 void ED060KD1Driver::blackWhiteCleanCycle() {
-    memset(framebuffer(), 0x00, ED060KD1_FRAME_BYTES);
+    memset(framebuffer(), 0x00, frameBytes());
     updateScreen(MODE_GC16);
     delay(800);
     whiteCleanCycle();
@@ -233,7 +250,9 @@ uint8_t ED060KD1Driver::calibratedLevelColor(uint8_t level, int x, int y) {
 }
 
 bool ED060KD1Driver::displayPacked4bpp(const uint8_t* packed, size_t length, bool clean_first) {
-    if (!ready() || packed == nullptr || length != ED060KD1_FRAME_BYTES) {
+    int w = width();
+    int h = height();
+    if (!ready() || packed == nullptr || length != frameBytes()) {
         return false;
     }
 
@@ -242,9 +261,9 @@ bool ED060KD1Driver::displayPacked4bpp(const uint8_t* packed, size_t length, boo
     }
 
     uint8_t* fb = framebuffer();
-    for (int y = 0; y < ED060KD1_HEIGHT; y++) {
-        int row_base = y * ED060KD1_WIDTH;
-        for (int x = 0; x < ED060KD1_WIDTH; x++) {
+    for (int y = 0; y < h; y++) {
+        int row_base = y * w;
+        for (int x = 0; x < w; x++) {
             int idx = row_base + x;
             uint8_t packed_byte = packed[idx >> 1];
             uint8_t level = (idx & 1) ? (packed_byte >> 4) : (packed_byte & 0x0F);
@@ -314,12 +333,16 @@ void ED060KD1Driver::drawScaledText(const char* text, int x, int y, int scale, u
 void ED060KD1Driver::showStatus(const char* line1, const char* line2, const char* line3) {
     clearWhiteBuffer();
     uint8_t* fb = framebuffer();
-    EpdRect outer = {40, 40, ED060KD1_WIDTH - 80, ED060KD1_HEIGHT - 80};
+    int w = width();
+    int h = height();
+    EpdRect outer = {40, 40, w - 80, h - 80};
     epd_draw_rect(outer, 0x00, fb);
     drawScaledText("ESP32 ED060KD1 WIFI", 100, 120, 6, 0x00);
     drawScaledText(line1, 100, 260, 4, 0x00);
     drawScaledText(line2, 100, 350, 4, 0x00);
     drawScaledText(line3, 100, 440, 4, 0x00);
-    drawScaledText("UPLOAD 1448X1072 16-GRAY IMAGE", 100, 820, 3, 0x00);
+    char info[40];
+    snprintf(info, sizeof(info), "UPLOAD %dX%d 16-GRAY IMAGE", w, h);
+    drawScaledText(info, 100, h > 880 ? 820 : h - 140, 3, 0x00);
     updateScreen(MODE_GC16);
 }

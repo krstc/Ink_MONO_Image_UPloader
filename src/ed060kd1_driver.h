@@ -5,9 +5,14 @@
 
 #include <epdiy.h>
 
-#define ED060KD1_WIDTH 1448
-#define ED060KD1_HEIGHT 1072
-#define ED060KD1_FRAME_BYTES ((ED060KD1_WIDTH * ED060KD1_HEIGHT) / 2)
+#define ED060KD1_DEFAULT_WIDTH 1448
+#define ED060KD1_DEFAULT_HEIGHT 1072
+#define ED060KD1_DEFAULT_FRAME_BYTES ((ED060KD1_DEFAULT_WIDTH * ED060KD1_DEFAULT_HEIGHT) / 2)
+
+// Kept for older code paths and generated assets that are fixed to ED060KD1.
+#define ED060KD1_WIDTH ED060KD1_DEFAULT_WIDTH
+#define ED060KD1_HEIGHT ED060KD1_DEFAULT_HEIGHT
+#define ED060KD1_FRAME_BYTES ED060KD1_DEFAULT_FRAME_BYTES
 
 // Board-specific panel power enable. This GPIO must stay with this hardware.
 #define ED060KD1_PANEL_POWER_GPIO GPIO_NUM_46
@@ -15,10 +20,12 @@
 class ED060KD1Driver {
 public:
     bool begin();
+    bool begin(int panel_width, int panel_height);
     bool ready() const;
 
     int width() const;
     int height() const;
+    size_t frameBytes() const;
     int temperature();
 
     uint8_t* framebuffer();
@@ -51,6 +58,7 @@ private:
     uint8_t glyphRow(char c, int row) const;
 
     bool initialized_ = false;
+    EpdDisplay_t panel_;
     EpdiyHighlevelState hl_;
 };
 
