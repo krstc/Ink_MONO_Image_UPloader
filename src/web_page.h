@@ -151,7 +151,6 @@ footer{color:var(--soft);background:var(--soft);font-size:11px;text-align:center
         <button class="secondary" id="devGray">16 Gray</button>
         <button class="secondary" id="devChecker">Checker</button>
         <button class="secondary" id="devResolution">Resolution</button>
-        <button class="secondary" id="devCalendar">Calendar</button>
         <button class="danger" id="devRepair">Repair</button>
       </div>
       <div class="row3" style="margin-top:8px">
@@ -719,7 +718,6 @@ function init(){
   $('devGray').onclick=()=>post('/dev/grayscale');
   $('devChecker').onclick=()=>post('/dev/checker');
   $('devResolution').onclick=()=>post('/dev/resolution');
-  $('devCalendar').onclick=()=>post('/dev/calendar');
   $('devRepair').onclick=repairDisplay;
   $('displaySave').onclick=saveDisplaySize;
   syncValues();

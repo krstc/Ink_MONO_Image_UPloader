@@ -4,7 +4,6 @@
 #include <WebServer.h>
 #include <WiFi.h>
 #include <esp_heap_caps.h>
-#include <time.h>
 
 #include "ed060kd1_driver.h"
 #include "logo_image.h"
@@ -968,143 +967,6 @@ static void drawDeveloperResolution() {
     }
 }
 
-static int monthFromBuildDate(const char* mon) {
-    static const char* names[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
-    for (int i = 0; i < 12; i++) {
-        if (strncmp(mon, names[i], 3) == 0) {
-            return i + 1;
-        }
-    }
-    return 1;
-}
-
-static void currentCalendarDate(int& year, int& month, int& day) {
-    time_t now = time(nullptr);
-    if (now > 1600000000) {
-        struct tm local_time;
-        localtime_r(&now, &local_time);
-        year = local_time.tm_year + 1900;
-        month = local_time.tm_mon + 1;
-        day = local_time.tm_mday;
-        return;
-    }
-
-    char mon[4] = {__DATE__[0], __DATE__[1], __DATE__[2], 0};
-    month = monthFromBuildDate(mon);
-    day = atoi(__DATE__ + 4);
-    year = atoi(__DATE__ + 7);
-}
-
-static bool isLeapYear(int year) {
-    return (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
-}
-
-static int daysInMonth(int year, int month) {
-    static const uint8_t days[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
-    if (month == 2 && isLeapYear(year)) {
-        return 29;
-    }
-    return days[month - 1];
-}
-
-static int weekdayMondayFirst(int year, int month, int day) {
-    if (month < 3) {
-        month += 12;
-        year--;
-    }
-    int k = year % 100;
-    int j = year / 100;
-    int h = (day + (13 * (month + 1)) / 5 + k + k / 4 + j / 4 + 5 * j) % 7;
-    return (h + 5) % 7;
-}
-
-static void drawDeveloperCalendar() {
-    cleanBeforeImageDisplay(1);
-    Epd.clearWhiteBuffer();
-
-    int dw = (int)displayWidth();
-    int dh = (int)displayHeight();
-    int year;
-    int month;
-    int today;
-    currentCalendarDate(year, month, today);
-
-    static const char* month_names[] = {"JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"};
-    static const char* weekdays[] = {"MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"};
-
-    int margin = max(28, min(dw, dh) / 30);
-    int title_scale = max(4, min(8, dw / 190));
-    int text_scale = max(2, min(4, dw / 380));
-    int small_scale = max(1, min(3, dw / 520));
-    int side_w = max(260, dw / 4);
-    int grid_x = margin;
-    int grid_y = margin + 210;
-    int grid_w = dw - margin * 3 - side_w;
-    int grid_h = dh - grid_y - margin;
-    int cell_w = grid_w / 7;
-    int cell_h = grid_h / 7;
-
-    if (cell_w < 54 || cell_h < 42) {
-        grid_w = dw - margin * 2;
-        side_w = 0;
-        cell_w = grid_w / 7;
-        cell_h = max(36, (dh - grid_y - margin) / 7);
-    }
-
-    Epd.drawText("CALENDAR", margin, margin + 22, title_scale, 0x00);
-    char date_title[32];
-    snprintf(date_title, sizeof(date_title), "%s %04d", month_names[month - 1], year);
-    Epd.drawText(date_title, margin, margin + 120, text_scale + 1, 0x00);
-
-    for (int i = 0; i < 7; i++) {
-        int x = grid_x + i * cell_w;
-        Epd.drawText(weekdays[i], x + 10, grid_y - 46, small_scale + 1, i >= 5 ? 0x44 : 0x00);
-    }
-
-    int first = weekdayMondayFirst(year, month, 1);
-    int max_day = daysInMonth(year, month);
-    int day = 1;
-    for (int row = 0; row < 6; row++) {
-        for (int col = 0; col < 7; col++) {
-            int x = grid_x + col * cell_w;
-            int y = grid_y + row * cell_h;
-            Epd.drawRect(x, y, cell_w, cell_h, 0x88);
-            if ((row + col) & 1) {
-                Epd.fillRect(x + 1, y + 1, cell_w - 2, cell_h - 2, 0xEE);
-            }
-            int index = row * 7 + col;
-            if (index < first || day > max_day) {
-                continue;
-            }
-            char label[4];
-            snprintf(label, sizeof(label), "%02d", day);
-            if (day == today) {
-                Epd.fillRect(x + 5, y + 5, cell_w - 10, cell_h - 10, 0x00);
-                Epd.drawText(label, x + 18, y + 18, text_scale, 0xFF);
-            } else {
-                Epd.drawText(label, x + 18, y + 18, text_scale, col >= 5 ? 0x44 : 0x00);
-            }
-            day++;
-        }
-        yield();
-    }
-
-    if (side_w > 0) {
-        int sx = dw - margin - side_w;
-        int sy = grid_y;
-        Epd.drawRect(sx, sy, side_w, grid_h, 0x00);
-        Epd.drawText("TODAY", sx + 24, sy + 34, text_scale, 0x00);
-        char day_text[8];
-        snprintf(day_text, sizeof(day_text), "%02d", today);
-        Epd.drawText(day_text, sx + 28, sy + 116, title_scale + 2, 0x00);
-        Epd.drawLine(sx + 24, sy + 250, sx + side_w - 24, sy + 250, 0x88);
-        Epd.drawText("EPD WIFI FRAME", sx + 24, sy + 300, small_scale + 1, 0x00);
-        Epd.drawText("16 GRAY READY", sx + 24, sy + 360, small_scale + 1, 0x44);
-        Epd.drawText("SLOT CAROUSEL", sx + 24, sy + 420, small_scale + 1, 0x44);
-        Epd.drawText("WEB UPLOADER", sx + 24, sy + 480, small_scale + 1, 0x00);
-    }
-}
-
 static void handleDevGrayscale() {
     if (!beginImmediateDisplay("Drawing 16 gray pattern")) {
         return;
@@ -1127,14 +989,6 @@ static void handleDevResolution() {
     }
     drawDeveloperResolution();
     endImmediateDisplay(Epd.updateScreen(MODE_GC16), "Resolution test shown");
-}
-
-static void handleDevCalendar() {
-    if (!beginImmediateDisplay("Drawing calendar demo")) {
-        return;
-    }
-    drawDeveloperCalendar();
-    endImmediateDisplay(Epd.updateScreen(MODE_GC16), "Calendar demo shown");
 }
 
 static void handleDevRepair() {
@@ -1442,7 +1296,6 @@ static void startWiFi() {
     Serial.printf("Open AP: %s, IP: %s\n", AP_SSID, WiFi.softAPIP().toString().c_str());
     loadWifiConfig();
     connectSTA(true);
-    configTime(8 * 3600, 0, "pool.ntp.org", "ntp.aliyun.com", "time.windows.com");
     last_sta_status = (wl_status_t)WiFi.status();
     last_sta_ip = staIpString();
 }
@@ -1463,7 +1316,6 @@ static void startServer() {
     server.on("/dev/grayscale", HTTP_POST, handleDevGrayscale);
     server.on("/dev/checker", HTTP_POST, handleDevChecker);
     server.on("/dev/resolution", HTTP_POST, handleDevResolution);
-    server.on("/dev/calendar", HTTP_POST, handleDevCalendar);
     server.on("/dev/repair", HTTP_POST, handleDevRepair);
     server.on("/slot/show", HTTP_POST, handleSlotShow);
     server.on("/slot/delete", HTTP_POST, handleSlotDelete);
